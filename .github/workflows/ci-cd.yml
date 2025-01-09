@@ -25,7 +25,7 @@ jobs:
     
     - name: Run tests
       run: |
-        pytest tests/
+        AWS_STACK_NAME=test PYTHONPATH=$(pwd) pytest
   
   deploy:
     needs: test
