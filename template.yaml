@@ -24,6 +24,9 @@ Resources:
       Runtime: python3.12
       Architectures:
         - x86_64
+      Environment:
+        Variables:
+          AWS_STACK_NAME: !Ref AWS::StackName
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ItemsTable
