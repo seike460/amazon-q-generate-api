@@ -25,7 +25,7 @@ jobs:
     
     - name: Run tests
       run: |
-        AWS_STACK_NAME=test PYTHONPATH=$(pwd) pytest
+        AWS_STACK_NAME=test AWS_REGION=ap-northeast-1 PYTHONPATH=$(pwd) pytest
   
   deploy:
     needs: test
