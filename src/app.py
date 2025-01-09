@@ -1,13 +1,15 @@
 # src/app.py
-import json
 import os
 import uuid
+import json
 import boto3
 from typing import Dict, Any, Optional, List
 
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(os.environ['AWS_STACK_NAME'] + '-items')
+# 環境変数 AWS_REGION がセットされていれば使う。なければ ap-northeast-1 をデフォルトに
+REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
 
+dynamodb = boto3.resource("dynamodb", region_name=REGION)
+table = dynamodb.Table(os.environ['AWS_STACK_NAME'] + '-items')
 
 def validate_item(item: Any) -> bool:
     """Validate the item data.
