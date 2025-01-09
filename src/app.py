@@ -17,7 +17,7 @@ def validate_item(item: Dict[str, Any]) -> bool:
 def create_item(body: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new item"""
     if not validate_item(body):
-        raise ValueError("Invalid item data")
+        raise ValueError(f"Invalid item data. Required fields: {', '.join(['name', 'description'])}")
     
     item_id = str(uuid.uuid4())
     item = {
@@ -25,7 +25,11 @@ def create_item(body: Dict[str, Any]) -> Dict[str, Any]:
         **body
     }
     
-    table.put_item(Item=item)
+    try:
+        table.put_item(Item=item)
+    except boto3.exceptions.Boto3Error as e:
+        # TODO: Implement retry logic
+        raise Exception(f"Failed to create item: {str(e)}") # import boto3
     return item
 
 
@@ -35,10 +39,19 @@ def get_item(item_id: str) -> Optional[Dict[str, Any]]:
     return response.get('Item')
 
 
-def list_items() -> List[Dict[str, Any]]:
-    """List all items"""
-    response = table.scan()
-    return response.get('Items', [])
+def list_items(limit: int = 100, last_evaluated_key: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """List items with pagination"""
+    scan_kwargs = {
+        'Limit': limit
+    }
+    if last_evaluated_key:
+        scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+    
+    response = table.scan(**scan_kwargs)
+    return {
+        'items': response.get('Items', []),
+        'last_evaluated_key': response.get('LastEvaluatedKey')
+    }
 
 
 def update_item(item_id: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -57,7 +70,11 @@ def update_item(item_id: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def delete_item(item_id: str) -> None:
     """Delete an item"""
-    table.delete_item(Key={'id': item_id})
+    existing_item = get_item(item_id)
+    if existing_item:
+        table.delete_item(Key={'id': item_id})
+    else:
+        raise ValueError(f"Item with id {item_id} not found")
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
