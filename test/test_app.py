@@ -1,25 +1,25 @@
-from botocore.exceptions import ClientError
-from moto import mock_dynamodb
-from src.app import create_item
-from src.app import create_item, table
-from src.app import create_item, validate_item
-from src.app import delete_item
-from src.app import delete_item, get_item
-from src.app import get_item
-from src.app import lambda_handler
-from src.app import list_items
-from src.app import update_item
-from src.app import update_item, validate_item
-from src.app import validate_item
-from typing import Dict, Any
-from unittest.mock import patch
-from unittest.mock import patch, MagicMock
-import boto3
 import json
 import os
-import pytest
-import src.app
 import uuid
+import boto3
+import pytest
+from moto import mock_dynamodb
+from unittest.mock import patch, MagicMock
+from typing import Dict, Any
+from botocore.exceptions import ClientError
+
+import src.app
+from src.app import (
+    create_item,
+    validate_item,
+    delete_item,
+    get_item,
+    lambda_handler,
+    list_items,
+    update_item,
+    table
+)
+
 
 class TestApp:
 
@@ -66,6 +66,8 @@ class TestApp:
             AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
             ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
         )
+        # テーブルがアクティブになるのを待機
+        table.meta.client.get_waiter('table_exists').wait(TableName=table_name)
 
         # Test invalid item data
         invalid_item = {'description': 'Test description'}
@@ -93,6 +95,7 @@ class TestApp:
         with pytest.raises(ValueError, match="Invalid item data. Required fields: name, description"):
             create_item({"name": "Test Item"})
 
+
     @mock_dynamodb
     def test_create_item_valid_data(self):
         """
@@ -100,34 +103,39 @@ class TestApp:
         """
         # Set up mock DynamoDB table
         dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
-        dynamodb.create_table(
-            TableName='test-items',
+        table_name = 'test-items'
+        os.environ['AWS_STACK_NAME'] = 'test'
+        
+        # Create mock table
+        table_obj = dynamodb.create_table(
+            TableName=table_name,
             KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
             AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
             ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
         )
+        # テーブルがアクティブになるのを待機
+        table_obj.meta.client.get_waiter('table_exists').wait(TableName=table_name)
 
-        # Mock the environment variable
-        os.environ['AWS_STACK_NAME'] = 'test'
+        # モックテーブルを src.app.table に差し替える
+        with patch('src.app.table', table_obj):
+            item_data = {
+                'name': 'Test Item',
+                'description': 'This is a test item'
+            }
 
-        # Prepare test data
-        item_data = {
-            'name': 'Test Item',
-            'description': 'This is a test item'
-        }
+            # Call the create_item function
+            result = create_item(item_data)
 
-        # Call the create_item function
-        result = create_item(item_data)
+            # Assert the result
+            assert 'id' in result
+            assert result['name'] == 'Test Item'
+            assert result['description'] == 'This is a test item'
 
-        # Assert the result
-        assert 'id' in result
-        assert result['name'] == 'Test Item'
-        assert result['description'] == 'This is a test item'
+            # Verify the item was added to the table
+            response = table_obj.get_item(Key={'id': result['id']})
+            assert 'Item' in response
+            assert response['Item'] == result
 
-        # Verify the item was added to the table
-        response = table.get_item(Key={'id': result['id']})
-        assert 'Item' in response
-        assert response['Item'] == result
 
     def test_create_item_with_empty_string_values(self, mock_table):
         """
@@ -574,17 +582,37 @@ class TestApp:
         assert json.loads(response['body']) == {'message': 'Item not found'}
         mock_get_item.assert_called_once_with('non_existent_id')
 
+    @mock_dynamodb
     def test_lambda_handler_get_nonexistent_item(self):
         """
         Test lambda_handler GET request for a non-existent item
+        (対策: テーブルを作成して待機し、さらに table をパッチする)
         """
-        event = {
-            'httpMethod': 'GET',
-            'pathParameters': {'id': 'non-existent-id'}
-        }
-        result = lambda_handler(event, None)
-        assert result['statusCode'] == 404
-        assert json.loads(result['body'])['message'] == 'Item not found'
+        # モックDynamoDBをセットアップ
+        dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        table_name = 'test-items'
+        os.environ['AWS_STACK_NAME'] = 'test'
+
+        # テーブルを作成
+        table_obj = dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
+            ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
+        )
+        # テーブルがアクティブになるのを待機
+        table_obj.meta.client.get_waiter('table_exists').wait(TableName=table_name)
+
+        # ここで table_obj を使うようにパッチ
+        with patch('src.app.table', table_obj):
+            event = {
+                'httpMethod': 'GET',
+                'pathParameters': {'id': 'non-existent-id'}
+            }
+            result = lambda_handler(event, None)
+
+            assert result['statusCode'] == 404
+            assert json.loads(result['body'])['message'] == 'Item not found'
 
     def test_lambda_handler_internal_server_error(self):
         """
